@@ -1,0 +1,104 @@
+def sap_open():
+    import subprocess
+    subprocess.Popen(['C:/Program Files (x86)/SAP/FrontEnd/SAPgui/saplogon.exe'])
+    return True
+
+def sap_close():
+    import subprocess
+    subprocess.call(["TASKKILL", "/F", "/IM", "saplogon.exe"], shell=True)
+    return True
+
+def sap_logon(environment:str, client=1):
+    import win32com.client
+    SapGuiAuto = win32com.client.GetObject("SAPGUI")
+    application = SapGuiAuto.GetScriptingEngine
+    connection = application.Openconnection(environment, True)
+    session = connection.Children(0)
+    try:
+        session.findById("wnd[0]").maximize()
+        session.findById(f"wnd[0]/usr/tblSAPMSYSTTC_IUSRACL/btnIUSRACL-BNAME[{client},0]").setFocus()
+        session.findById(f"wnd[0]/usr/tblSAPMSYSTTC_IUSRACL/btnIUSRACL-BNAME[{client},0]").press()
+        return session
+    except: return session
+    
+def sap_code(tcode:str, session) -> bool:
+    """Enter SAP transaction \n
+    tcode - required argument in str format \n
+    session - return value of sap_logon function
+    """
+    import win32com.client
+    try:
+        session.findById("wnd[0]/tbar[0]/okcd").text = tcode
+        session.findById("wnd[0]").sendVKey(0)
+        return True
+    except: return False
+    
+def sap_variant(session, var_to_use: str, created_by: str ="*", version=1):
+    """Select variant. Suitable for faglb03, fagll03, etc. \n
+    session - returned value of sap_logon function \n
+    var_to_use - variant to apply
+    created_by - user, who created the variant, defaults to "*" \n
+    version - how to select version, defaults to 1, choose 2 if 1 fails
+    """
+    import win32com.client # by default
+    valid = [1,2]
+    if version not in valid: 
+        raise ValueError("version must be 1 or 2") # limit the user from choosing invalid variants
+    
+    session.findById("wnd[0]/tbar[1]/btn[17]").press() # click variant button
+    match version:
+        case 1:
+            session.findById("wnd[1]/usr/txtV-LOW").text = var_to_use # variant to select
+            session.findById("wnd[1]/usr/txtENAME-LOW").text = created_by # who created the variant
+            session.findById("wnd[1]/tbar[0]/btn[8]").press() 
+            return version, True
+        
+        case 2:
+            try:
+                session.findById("wnd[1]/usr/txtENAME-LOW").text = created_by # who created the variant
+                session.findById("wnd[1]/tbar[0]/btn[8]").press() 
+                variant = session.findById("wnd[1]/usr/cntlALV_CONTAINER_1/shellcont/shell")
+                rows = variant.rowCount
+                for _ in range(rows - 1): # loop through the rows until correct variant is found:
+                    layout_variant = variant.getCellValue(_, "VARIANT")
+                    if layout_variant == var_to_use:
+                        session.findById("wnd[1]/usr/cntlALV_CONTAINER_1/shellcont/shell").SelectedRows = _
+                        session.findById("wnd[1]/usr/cntlALV_CONTAINER_1/shellcont/shell").doubleClickCurrentCell()
+                        break
+                return version, True
+            except: 
+                variant = session.findById("wnd[1]/usr/cntlALV_CONTAINER_1/shellcont/shell")
+                rows = variant.rowCount
+                for _ in range(rows - 1): # loop through the rows until correct variant is found:
+                    layout_variant = variant.getCellValue(_, "VARIANT")
+                    if layout_variant == var_to_use:
+                        session.findById("wnd[1]/usr/cntlALV_CONTAINER_1/shellcont/shell").SelectedRows = _
+                        session.findById("wnd[1]/usr/cntlALV_CONTAINER_1/shellcont/shell").doubleClickCurrentCell()
+                        break
+                return version, False    
+            
+def sap_run(session) -> None:
+    """Run any report \n
+    session - returned value of sap_logon function 
+    """
+    import win32com.client # by default
+    try: session.findById("wnd[0]").sendVKey(8)
+    except: session.findById("wnd[1]/tbar[0]/btn[8]").press()
+
+def sap_extract(session, extr_path: str, extr_name: str) -> str:
+    """Run any report \n
+    This function will download sap extract in .xlsx format and replace it if already exists \n
+    session - returned value of sap_logon function \n
+    extr_path - where to extract \n
+    extr_name - how to call the extract
+    """
+    import win32com.client # by default
+    session.findById("wnd[0]/mbar/menu[0]/menu[3]/menu[1]").select()
+    session.findById("wnd[1]/usr/ctxtDY_PATH").text = extr_path
+    session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = extr_name
+    session.findById("wnd[1]/tbar[0]/btn[0]").press() # try to generate the report
+    # generate or overwrite 
+    msg = session.FindById("wnd[0]/sbar").Text
+    if "already" in msg and "exists" in msg:
+        session.findById("wnd[1]/tbar[0]/btn[11]").press() # replace existing report
+    return msg
